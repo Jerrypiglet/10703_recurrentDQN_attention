@@ -7,7 +7,7 @@ from keras.optimizers import (Adam, RMSprop)
 import numpy as np
 import keras
 from keras.layers import (Activation, Convolution2D, Dense, Flatten, Input,
-        Permute, merge, Lambda)
+        Permute, merge, Lambda, Reshape, TimeDistributed, LSTM)
 from keras.models import Model
 from keras import backend as K
 import sys
@@ -17,7 +17,7 @@ import tensorflow as tf
 
 """Main DQN agent."""
 
-def create_model(input_shape, num_actions, mode, model_name='q_network'):  # noqa: D103
+def create_model(input_shape, num_actions, mode, args, model_name='q_network'):  # noqa: D103
     """Create the Q-network model.
 
     Use Keras to construct a keras.models.Model instance (you can also
@@ -52,10 +52,30 @@ def create_model(input_shape, num_actions, mode, model_name='q_network'):  # noq
             flatten_hidden = Flatten(name = "flatten")(input_data)
             output = Dense(num_actions, name = "output")(flatten_hidden)
         else:
-            h1 = Convolution2D(32, (8, 8), strides = 4, activation = "relu", name = "conv1")(input_data)
-            h2 = Convolution2D(64, (4, 4), strides = 2, activation = "relu", name = "conv2")(h1)
-            h3 = Convolution2D(64, (3, 3), strides = 1, activation = "relu", name = "conv3")(h2)
-            flatten_hidden = Flatten(name = "flatten")(h3)
+            if not(args.recurrent):
+                h1 = Convolution2D(32, (8, 8), strides = 4, activation = "relu", name = "conv1")(input_data)
+                h2 = Convolution2D(64, (4, 4), strides = 2, activation = "relu", name = "conv2")(h1)
+                h3 = Convolution2D(64, (3, 3), strides = 1, activation = "relu", name = "conv3")(h2)
+                flatten_hidden = Flatten(name = "flatten")(h3)
+            else:
+                print '>>>> Defining Recurrent Modules...'
+                # input_data = K.expand_dims(input_data, axis=-1)
+                input_data_expanded = Reshape((input_shape[0], input_shape[1], input_shape[2], 1), input_shape = input_shape) (input_data)
+                # print input_shape, input_data_expanded.shape
+                input_data_TimeDistributed = Permute((3, 1, 2, 4), input_shape=input_shape)(input_data_expanded)
+                # print input_data_TimeDistributed.shape
+                h1 = TimeDistributed(Convolution2D(32, (8, 8), strides = 4, activation = "relu", name = "conv1"), \
+                    input_shape=(args.num_frames, input_shape[0], input_shape[1], 1))(input_data_TimeDistributed)
+                h2 = TimeDistributed(Convolution2D(64, (4, 4), strides = 2, activation = "relu", name = "conv2"))(h1)
+                h3 = TimeDistributed(Convolution2D(64, (3, 3), strides = 1, activation = "relu", name = "conv3"))(h2)
+                # print h3.shape
+                flatten_hidden = TimeDistributed(Flatten())(h3)
+                # print flatten_hidden.shape
+                hidden_input = TimeDistributed(Dense(512, activation = 'relu', name = 'flat_to_512')) (flatten_hidden)
+                # print hidden_input.shape
+                flatten_hidden = LSTM(512, return_sequences=False, stateful=False, input_shape=(args.num_frames, 512)) (hidden_input)
+                # print flatten_hidden.shape
+
             if mode == "dqn":
                 h4 = Dense(512, activation='relu', name = "fc")(flatten_hidden)
                 output = Dense(num_actions, name = "output")(h4)
@@ -66,7 +86,9 @@ def create_model(input_shape, num_actions, mode, model_name='q_network'):  # noq
                 action = Dense(num_actions, name = "action")(action_hidden)
                 action_mean = Lambda(lambda x: tf.reduce_mean(x, axis = 1, keep_dims = True), name = 'action_mean')(action) 
                 output = Lambda(lambda x: x[0] + x[1] - x[2], name = 'output')([action, value, action_mean])
-    return Model(inputs = input_data, outputs = output)
+    model = Model(inputs = input_data, outputs = output)
+    print(model.summary())
+    return model
 
 def save_scalar(step, name, value, writer):
     """Save a scalar value to tensorboard.
@@ -142,13 +164,14 @@ class DQNAgent:
         self.frame_height = args.frame_height
         self.num_frames = args.num_frames
         self.output_path = args.output
+        self.output_path_videos = args.output + '/videos/'
         self.save_freq = args.save_freq
         self.load_network = args.load_network
         self.load_network_path = args.load_network_path
         self.enable_ddqn = args.ddqn
         self.net_mode = args.net_mode
-        self.q_network = create_model(input_shape, num_actions, self.net_mode, "QNet")
-        self.target_network = create_model(input_shape, num_actions, self.net_mode, "TargetNet")
+        self.q_network = create_model(input_shape, num_actions, self.net_mode, args, "QNet")
+        self.target_network = create_model(input_shape, num_actions, self.net_mode, args, "TargetNet")
         print(">>>> Net mode: %s, Using double dqn: %s" % (self.net_mode, self.enable_ddqn))
         self.eval_freq = args.eval_freq
         self.no_experience = args.no_experience
@@ -423,7 +446,7 @@ class DQNAgent:
             self.q_network.load_weights(self.load_network_path)
             print("Load network from:", self.load_network_path)
         if monitor:
-            env = wrappers.Monitor(env, self.output_path, video_callable=lambda x:True, resume=True)
+            env = wrappers.Monitor(env, self.output_path_videos, video_callable=lambda x:True, resume=True)
         state = env.reset()
 
         idx_episode = 1

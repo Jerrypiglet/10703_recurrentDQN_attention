@@ -31,6 +31,8 @@ def get_output_folder(parent_dir, env_name, task_name):
     """
     if not os.path.exists(parent_dir):
         os.makedirs(parent_dir)
+        print parent_dir+'/videos/'
+        os.makedirs(parent_dir+'/videos/')
     experiment_id = 0
     for folder_name in os.listdir(parent_dir):
         if not os.path.isdir(os.path.join(parent_dir, folder_name)):
@@ -58,7 +60,7 @@ def main():  # noqa: D103
     parser.add_argument('--initial_epsilon', default=1.0, type=float, help='Initial exploration probability in epsilon-greedy')
     parser.add_argument('--final_epsilon', default=0.05, type=float, help='Final exploration probability in epsilon-greedy')
     parser.add_argument('--exploration_steps', default=1000000, type=int, help='Number of steps over which the initial value of epsilon is linearly annealed to its final value')
-    parser.add_argument('--num_samples', default=4000000, type=int, help='Number of training samples from the environment in training')
+    parser.add_argument('--num_samples', default=10000000, type=int, help='Number of training samples from the environment in training')
     parser.add_argument('--num_frames', default=4, type=int, help='Number of frames to feed to Q-Network')
     parser.add_argument('--frame_width', default=84, type=int, help='Resized frame width')
     parser.add_argument('--frame_height', default=84, type=int, help='Resized frame height')
@@ -80,10 +82,12 @@ def main():  # noqa: D103
     parser.add_argument('--no_target', default=False, action='store_true', help='do not use target fixing')
     parser.add_argument('--no_monitor', default=False, action='store_true', help='do not record video')
 
-    parser.add_argument('--task_name', default='testTask', help='task name')
+    parser.add_argument('--task_name', default='', help='task name')
+    parser.add_argument('--recurrent', default=False, dest='recurrent', action='store_true', help='enable recurrent DQN')
 
     args = parser.parse_args()
     args.output = get_output_folder(args.output, args.env, args.task_name)
+
     env = gym.make(args.env)
     print("==== Output saved to: ", args.output)
     print("==== Args used:")
@@ -96,10 +100,7 @@ def main():  # noqa: D103
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
-    # sess = tf.get_default_session()
-    # sess = tf.Session(config=config)
     writer = tf.summary.FileWriter(args.output)
-    # writer.add_graph(tf.get_default_graph())
 
     num_actions = env.action_space.n
     print(">>>> Game ", args.env, " #actions: ", num_actions)

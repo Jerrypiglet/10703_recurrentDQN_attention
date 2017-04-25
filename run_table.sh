@@ -24,7 +24,7 @@
 # --load_network_path=../final/problem6/qnet673.h5 | tee ../table/problem6.txt
 
 # # problem 7
-# python dqn_atari.py --env=Enduro-v0 --test --load_network --net_mode=duel \
-# --num_episodes_at_test=100 --no_monitor \
-# --load_network_path=../final/problem7/qnet637.h5 | tee ../table/problem7.txt
+python dqn_atari.py --env=Enduro-v0 --test --load_network --net_mode=duel \
+--num_episodes_at_test=100 --no_monitor \
+--load_network_path=../final/problem7/qnet637.h5 | tee ../table/problem7.txt
 
