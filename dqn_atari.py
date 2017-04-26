@@ -8,7 +8,7 @@ import gym
 from gym import wrappers
 import tensorflow as tf
 
-from deeprl_prj.dqn_rl import DQNAgent
+from deeprl_prj.dqn_tf import DQNAgent
 
 def get_output_folder(parent_dir, env_name, task_name):
     """Return save folder.
@@ -97,21 +97,16 @@ def main():  # noqa: D103
     # create your DQN agent, create your model, etc.
     # then you can run your fit method.
 
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth = True
-    config.allow_soft_placement = True
-    writer = tf.summary.FileWriter(args.output)
-
     num_actions = env.action_space.n
     print(">>>> Game ", args.env, " #actions: ", num_actions)
-    with tf.Session(config=config) as sess:
-        dqn = DQNAgent(sess, args, num_actions)
-        if args.train:
-            print(">> Training mode.")
-            dqn.fit(writer, env, args.num_samples, args.max_episode_length)
-        else:
-            print(">> Evaluation mode.")
-            dqn.evaluate(writer, env, args.num_episodes_at_test, args.max_episode_length, not args.no_monitor)
+
+    dqn = DQNAgent(args, num_actions)
+    # if args.train:
+    print(">> Training mode.")
+    dqn.fit(env, args.num_samples, args.max_episode_length)
+    # else:
+    #     print(">> Evaluation mode.")
+    #     dqn.evaluate(writer, env, args.num_episodes_at_test, args.max_episode_length, not args.no_monitor)
 
 if __name__ == '__main__':
     main()
