@@ -4,11 +4,11 @@ import argparse
 import os
 import gym
 # import gym_rle
-import universe
+# import universe
 from gym import wrappers
 import tensorflow as tf
 
-from deeprl_prj.dqn import DQNAgent
+from deeprl_prj.dqn_rl import DQNAgent
 
 def get_output_folder(parent_dir, env_name, task_name):
     """Return save folder.
