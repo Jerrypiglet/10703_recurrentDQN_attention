@@ -8,7 +8,7 @@ import gym
 from gym import wrappers
 import tensorflow as tf
 
-from deeprl_prj.dqn_tf import DQNAgent
+from deeprl_prj.dqn import DQNAgent
 
 def get_output_folder(parent_dir, env_name, task_name):
     """Return save folder.
@@ -31,8 +31,7 @@ def get_output_folder(parent_dir, env_name, task_name):
     """
     if not os.path.exists(parent_dir):
         os.makedirs(parent_dir)
-        print parent_dir+'/videos/'
-        os.makedirs(parent_dir+'/videos/')
+        print '===== Folder did not exist; creating... %s'%parent_dir
     experiment_id = 0
     for folder_name in os.listdir(parent_dir):
         if not os.path.isdir(os.path.join(parent_dir, folder_name)):
@@ -47,6 +46,15 @@ def get_output_folder(parent_dir, env_name, task_name):
 
     parent_dir = os.path.join(parent_dir, env_name)
     parent_dir = parent_dir + '-run{}'.format(experiment_id) + '-' + task_name
+    if not os.path.exists(parent_dir):
+        os.makedirs(parent_dir)
+        print parent_dir+'/videos/'
+        os.makedirs(parent_dir+'/videos/')
+        print '===== Folder did not exist; creating... %s'%parent_dir
+    else:
+        print '===== Folder exists; delete? %s'%parent_dir
+        raw_input("Press Enter to continue...")
+        os.system('rm -rf %s/' % (parent_dir))
     return parent_dir
 
 def main():  # noqa: D103
@@ -84,6 +92,8 @@ def main():  # noqa: D103
 
     parser.add_argument('--task_name', default='', help='task name')
     parser.add_argument('--recurrent', default=False, dest='recurrent', action='store_true', help='enable recurrent DQN')
+    parser.add_argument('--a_t', default=False, dest='a_t', action='store_true', help='enable temporal attention')
+    parser.add_argument('--bidir', default=False, dest='bidir', action='store_true', help='enable two layer bidirectional lstm')
 
     args = parser.parse_args()
     args.output = get_output_folder(args.output, args.env, args.task_name)

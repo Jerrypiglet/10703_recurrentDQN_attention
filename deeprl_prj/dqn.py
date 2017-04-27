@@ -7,13 +7,21 @@ from keras.optimizers import (Adam, RMSprop)
 import numpy as np
 import keras
 from keras.layers import (Activation, Convolution2D, Dense, Flatten, Input,
-        Permute, merge, Lambda, Reshape, TimeDistributed, LSTM)
+        Permute, merge, Merge, multiply, Lambda, Reshape, TimeDistributed, LSTM, RepeatVector, Permute)
+from keras.layers.wrappers import Bidirectional
 from keras.models import Model
 from keras import backend as K
+
 import sys
 from gym import wrappers
 
 import tensorflow as tf
+
+from keras.backend.tensorflow_backend import set_session
+config = tf.ConfigProto()
+config.gpu_options.allow_growth = True
+config.allow_soft_placement = True
+set_session(tf.Session(config=config))
 
 """Main DQN agent."""
 
@@ -59,30 +67,43 @@ def create_model(input_shape, num_actions, mode, args, model_name='q_network'): 
                 flatten_hidden = Flatten(name = "flatten")(h3)
             else:
                 print '>>>> Defining Recurrent Modules...'
-                # input_data = K.expand_dims(input_data, axis=-1)
                 input_data_expanded = Reshape((input_shape[0], input_shape[1], input_shape[2], 1), input_shape = input_shape) (input_data)
-                # print input_shape, input_data_expanded.shape
                 input_data_TimeDistributed = Permute((3, 1, 2, 4), input_shape=input_shape)(input_data_expanded)
-                # print input_data_TimeDistributed.shape
                 h1 = TimeDistributed(Convolution2D(32, (8, 8), strides = 4, activation = "relu", name = "conv1"), \
                     input_shape=(args.num_frames, input_shape[0], input_shape[1], 1))(input_data_TimeDistributed)
                 h2 = TimeDistributed(Convolution2D(64, (4, 4), strides = 2, activation = "relu", name = "conv2"))(h1)
                 h3 = TimeDistributed(Convolution2D(64, (3, 3), strides = 1, activation = "relu", name = "conv3"))(h2)
-                # print h3.shape
                 flatten_hidden = TimeDistributed(Flatten())(h3)
-                # print flatten_hidden.shape
                 hidden_input = TimeDistributed(Dense(512, activation = 'relu', name = 'flat_to_512')) (flatten_hidden)
-                # print hidden_input.shape
-                flatten_hidden = LSTM(512, return_sequences=False, stateful=False, input_shape=(args.num_frames, 512)) (hidden_input)
-                # print flatten_hidden.shape
+                if not(args.a_t):
+                    context = LSTM(512, return_sequences=False, stateful=False, input_shape=(args.num_frames, 512)) (hidden_input)
+                    # print flatten_hidden.shape
+                else:
+                    if args.bidir:
+                        hidden_input = Bidirectional(LSTM(512, return_sequences=True, stateful=False, input_shape=(args.num_frames, 512)), merge_mode='sum') (hidden_input)
+                        all_outs = Bidirectional(LSTM(512, return_sequences=True, stateful=False, input_shape=(args.num_frames, 512)), merge_mode='sum') (hidden_input)
+                    else:
+                        all_outs = LSTM(512, return_sequences=True, stateful=False, input_shape=(args.num_frames, 512)) (hidden_input)
+                    # attention
+                    attention = TimeDistributed(Dense(1, activation='tanh'))(all_outs) 
+                    print attention.shape
+                    attention = Flatten()(attention)
+                    attention = Activation('softmax')(attention)
+                    # activations = K.batch_dot(Reshape((1, args.num_frames))(attention), all_outs, [1, 512])
+                    # context = Flatten()(activations)
+                    attention = RepeatVector(512)(attention)
+                    attention = Permute([2, 1])(attention)
+                    sent_representation = merge([all_outs, attention], mode='mul')
+                    context = Lambda(lambda xin: K.sum(xin, axis=-2), output_shape=(512,))(sent_representation)
+                    print context.shape
 
             if mode == "dqn":
-                h4 = Dense(512, activation='relu', name = "fc")(flatten_hidden)
+                h4 = Dense(512, activation='relu', name = "fc")(context)
                 output = Dense(num_actions, name = "output")(h4)
             elif mode == "duel":
-                value_hidden = Dense(512, activation = 'relu', name = 'value_fc')(flatten_hidden)
+                value_hidden = Dense(512, activation = 'relu', name = 'value_fc')(context)
                 value = Dense(1, name = "value")(value_hidden)
-                action_hidden = Dense(512, activation = 'relu', name = 'action_fc')(flatten_hidden)
+                action_hidden = Dense(512, activation = 'relu', name = 'action_fc')(context)
                 action = Dense(num_actions, name = "action")(action_hidden)
                 action_mean = Lambda(lambda x: tf.reduce_mean(x, axis = 1, keep_dims = True), name = 'action_mean')(action) 
                 output = Lambda(lambda x: x[0] + x[1] - x[2], name = 'output')([action, value, action_mean])
@@ -147,7 +168,7 @@ class DQNAgent:
     batch_size: int
       How many samples in each minibatch.
     """
-    def __init__(self, sess, args, num_actions):
+    def __init__(self, args, num_actions):
         self.num_actions = num_actions
         input_shape = (args.frame_height, args.frame_width, args.num_frames)
         self.history_processor = HistoryPreprocessor(args.num_frames - 1)
@@ -182,6 +203,8 @@ class DQNAgent:
         self.target_network.set_weights(self.q_network.get_weights())
         self.final_model = None
         self.compile()
+
+        self.writer = tf.summary.FileWriter(self.output_path)
 
     def compile(self, optimizer = None, loss_func = None):
         """Setup all of the TF graph variables/ops.
@@ -312,7 +335,7 @@ class DQNAgent:
 
         return self.final_model.train_on_batch([states, action_mask], target), np.mean(target)
 
-    def fit(self, writer, env, num_iterations, max_episode_length=None):
+    def fit(self, env, num_iterations, max_episode_length=None):
         """Fit your model to the provided environment.
 
         Its a good idea to print out things like loss, average reward,
@@ -340,6 +363,7 @@ class DQNAgent:
         is_training = True
         print("Training starts.")
         self.save_model(0)
+        eval_count = 0
 
         state = env.reset()
         burn_in = True
@@ -385,13 +409,13 @@ class DQNAgent:
                         (t, idx_episode, episode_frames, episode_reward, episode_raw_reward, episode_loss, 
                         avg_target_value, self.policy.step, self.memory.current))
                     sys.stdout.flush()
-                    save_scalar(idx_episode, 'episode_frames', episode_frames, writer)
-                    save_scalar(idx_episode, 'episode_reward', episode_reward, writer)
-                    save_scalar(idx_episode, 'episode_raw_reward', episode_raw_reward, writer)
-                    save_scalar(idx_episode, 'episode_loss', episode_loss, writer)
-                    save_scalar(idx_episode, 'avg_reward', episode_reward / episode_frames, writer)
-                    save_scalar(idx_episode, 'avg_target_value', avg_target_value, writer)
-                    save_scalar(idx_episode, 'avg_loss', episode_loss / episode_frames, writer)
+                    save_scalar(idx_episode, 'train/episode_frames', episode_frames, self.writer)
+                    save_scalar(idx_episode, 'train/episode_reward', episode_reward, self.writer)
+                    save_scalar(idx_episode, 'train/episode_raw_reward', episode_raw_reward, self.writer)
+                    save_scalar(idx_episode, 'train/episode_loss', episode_loss, self.writer)
+                    save_scalar(idx_episode, 'train_avg/avg_reward', episode_reward / episode_frames, self.writer)
+                    save_scalar(idx_episode, 'train_avg/avg_target_value', avg_target_value, self.writer)
+                    save_scalar(idx_episode, 'train_avg/avg_loss', episode_loss / episode_frames, self.writer)
                     episode_frames = 0
                     episode_reward = .0
                     episode_raw_reward = .0
@@ -414,9 +438,9 @@ class DQNAgent:
                 if t % self.save_freq == 0:
                     self.save_model(idx_episode)
                 if t % (self.eval_freq * self.train_freq) == 0:
-                    episode_raw_reward, episode_reward_std = self.evaluate(env, 20, max_episode_length, True)
-                    save_scalar(t, 'eval_episode_raw_reward', episode_raw_reward, writer)
-                    save_scalar(t, 'eval_episode_reward_std', episode_reward_std, writer)
+                    episode_reward_mean, episode_reward_std, eval_count = self.evaluate(env, 20, eval_count, max_episode_length, True)
+                    save_scalar(t, 'eval/eval_episode_reward_mean', episode_reward_mean, self.writer)
+                    save_scalar(t, 'eval/eval_episode_reward_std', episode_reward_std, self.writer)
 
         self.save_model(idx_episode)
 
@@ -426,7 +450,7 @@ class DQNAgent:
         self.q_network.save_weights(safe_path)
         print("Network at", idx_episode, "saved to:", safe_path)
 
-    def evaluate(self, env, num_episodes, max_episode_length=None, monitor=True):
+    def evaluate(self, env, num_episodes, eval_count, max_episode_length=None, monitor=True):
         """Test your agent with a provided environment.
         
         You shouldn't update your network parameters here. Also if you
@@ -467,6 +491,9 @@ class DQNAgent:
             if done:
                 print("Eval: time %d, episode %d, length %d, reward %.0f" %
                     (t, idx_episode, episode_frames, episode_reward[idx_episode-1]))
+                eval_count += 1
+                save_scalar(eval_count, 'eval/eval_episode_raw_reward', episode_reward[idx_episode-1], self.writer)
+                save_scalar(eval_count, 'eval/eval_episode_raw_length', episode_frames, self.writer)
                 sys.stdout.flush()
                 state = env.reset()
                 episode_frames = 0
@@ -480,4 +507,4 @@ class DQNAgent:
             (num_episodes, reward_mean, reward_std))
         sys.stdout.flush()
 
-        return reward_mean, reward_std
+        return reward_mean, reward_std, eval_count
