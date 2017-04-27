@@ -3,110 +3,105 @@ from deeprl_prj.objectives import *
 from deeprl_prj.preprocessors import *
 from deeprl_prj.utils import *
 from deeprl_prj.core import *
-from keras.optimizers import (Adam, RMSprop)
+# from keras.optimizers import (Adam, RMSprop)
 import numpy as np
-import keras
-from keras.layers import (Activation, Convolution2D, Dense, Flatten, Input,
-        Permute, merge, Merge, multiply, Lambda, Reshape, TimeDistributed, LSTM, RepeatVector, Permute)
-from keras.layers.wrappers import Bidirectional
-from keras.models import Model
-from keras import backend as K
-
+# import keras
+# from keras.layers import (Activation, Convolution2D, Dense, Flatten, Input,
+#         Permute, merge, Lambda, Reshape, TimeDistributed, LSTM)
+# from keras.models import Model
+# from keras import backend as K
 import sys
 from gym import wrappers
 
 import tensorflow as tf
-
-from keras.backend.tensorflow_backend import set_session
-config = tf.ConfigProto()
-config.gpu_options.allow_growth = True
-config.allow_soft_placement = True
-set_session(tf.Session(config=config))
+from helper import *
 
 """Main DQN agent."""
 
-def create_model(input_shape, num_actions, mode, args, model_name='q_network'):  # noqa: D103
-    """Create the Q-network model.
+class Qnetwork():
+    def __init__(self, h_size, num_frames, num_actions, rnn_cell, myScope):
+        #The network recieves a frame from the game, flattened into an array.
+        #It then resizes it and processes it through four convolutional layers.
+        self.imageIn =  tf.placeholder(shape=[None,84,84,num_frames],dtype=tf.float32)
+        self.image_permute = tf.transpose(self.imageIn, perm=[0, 3, 1, 2])
+        self.image_reshape = tf.reshape(self.image_permute, [-1, 84, 84, 1])
+        self.image_reshape_recoverd = tf.squeeze(tf.gather(tf.reshape(self.image_reshape, [-1, num_frames, 84, 84, 1]), [0]), [0])
+        self.summary_merged = tf.summary.merge([tf.summary.image('image_reshape_recoverd', self.image_reshape_recoverd, max_outputs=num_frames)])
+        # self.imageIn = tf.reshape(self.scalarInput,shape=[-1,84,84,1])
+        self.conv1 = tf.contrib.layers.convolution2d( \
+            inputs=self.image_reshape,num_outputs=32,\
+            kernel_size=[8,8],stride=[4,4],padding='VALID', \
+            activation_fn=tf.nn.relu, biases_initializer=None,scope=myScope+'_conv1')
+        self.conv2 = tf.contrib.layers.convolution2d( \
+            inputs=self.conv1,num_outputs=64,\
+            kernel_size=[4,4],stride=[2,2],padding='VALID', \
+            activation_fn=tf.nn.relu, biases_initializer=None,scope=myScope+'_conv2')
+        self.conv3 = tf.contrib.layers.convolution2d( \
+            inputs=self.conv2,num_outputs=64,\
+            kernel_size=[3,3],stride=[1,1],padding='VALID', \
+            activation_fn=tf.nn.relu, biases_initializer=None,scope=myScope+'_conv3')
+        # self.conv4 = tf.contrib.layers.convolution2d( \
+        #     inputs=self.conv3,num_outputs=h_size,\
+        #     kernel_size=[7,7],stride=[1,1],padding='VALID', \
+        #     activation_fn=tf.nn.relu, biases_initializer=None,scope=myScope+'_conv4')
+        self.conv4 = tf.contrib.layers.fully_connected(tf.contrib.layers.flatten(self.conv3), h_size, activation_fn=tf.nn.relu)
+        
+        # self.trainLength = tf.placeholder(dtype=tf.int32)
+        #We take the output from the final convolutional layer and send it to a recurrent layer.
+        #The input must be reshaped into [batch x trace x units] for rnn processing, 
+        #and then returned to [batch x units] when sent through the upper levles.
+        self.batch_size = tf.placeholder(dtype=tf.int32)
+        self.convFlat = tf.reshape(self.conv4,[self.batch_size, num_frames, h_size])
+        self.state_in = rnn_cell.zero_state(self.batch_size, tf.float32)
+        self.rnn_outputs, self.rnn_state = tf.nn.dynamic_rnn(\
+                inputs=self.convFlat,cell=rnn_cell,dtype=tf.float32,initial_state=self.state_in,scope=myScope+'_rnn')
+        # self.rnn_outputs, self.rnn_state = tf.nn.dynamic_rnn(\
+        #         inputs=self.convFlat, cell=rnn_cell, dtype=tf.float32, scope=myScope+'_rnn')
+        print "======", self.rnn_outputs.get_shape().as_list()
 
-    Use Keras to construct a keras.models.Model instance (you can also
-    use the SequentialModel class).
+        # self.rnn_outputs = tf.reverse(self.rnn_outputs, [1])
 
-    We highly recommend that you use tf.name_scope as discussed in
-    class when creating the model and the layers. This will make it
-    far easier to understnad your network architecture if you are
-    logging with tensorboard.
+        self.rnn_last_output = tf.slice(self.rnn_outputs, [0, num_frames-1, 0], [-1, 1, -1])
+        # self.rnn = tf.reshape(self.rnn_last_output, shape=[self.batch_size, h_size])
+        self.rnn = tf.squeeze(self.rnn_last_output, [1])
+        print "==========", self.rnn.get_shape().as_list()
 
-    Parameters
-    ----------
-    window: int
-      Each input to the network is a sequence of frames. This value
-      defines how many frames are in the sequence.
-    input_shape: tuple(int, int, int), rows, cols, channels
-      The expected input image size.
-    num_actions: int
-      Number of possible actions. Defined by the gym environment.
-    model_name: str
-      Useful when debugging. Makes the model show up nicer in tensorboard.
-
-    Returns
-    -------
-    keras.models.Model
-      The Q-model.
-    """
-    assert(mode in ("linear", "duel", "dqn"))
-    with tf.variable_scope(model_name):
-        input_data = Input(shape = input_shape, name = "input")
-        if mode == "linear":
-            flatten_hidden = Flatten(name = "flatten")(input_data)
-            output = Dense(num_actions, name = "output")(flatten_hidden)
-        else:
-            if not(args.recurrent):
-                h1 = Convolution2D(32, (8, 8), strides = 4, activation = "relu", name = "conv1")(input_data)
-                h2 = Convolution2D(64, (4, 4), strides = 2, activation = "relu", name = "conv2")(h1)
-                h3 = Convolution2D(64, (3, 3), strides = 1, activation = "relu", name = "conv3")(h2)
-                flatten_hidden = Flatten(name = "flatten")(h3)
-            else:
-                print '>>>> Defining Recurrent Modules...'
-                input_data_expanded = Reshape((input_shape[0], input_shape[1], input_shape[2], 1), input_shape = input_shape) (input_data)
-                input_data_TimeDistributed = Permute((3, 1, 2, 4), input_shape=input_shape)(input_data_expanded)
-                h1 = TimeDistributed(Convolution2D(32, (8, 8), strides = 4, activation = "relu", name = "conv1"), \
-                    input_shape=(args.num_frames, input_shape[0], input_shape[1], 1))(input_data_TimeDistributed)
-                h2 = TimeDistributed(Convolution2D(64, (4, 4), strides = 2, activation = "relu", name = "conv2"))(h1)
-                h3 = TimeDistributed(Convolution2D(64, (3, 3), strides = 1, activation = "relu", name = "conv3"))(h2)
-                flatten_hidden = TimeDistributed(Flatten())(h3)
-                hidden_input = TimeDistributed(Dense(512, activation = 'relu', name = 'flat_to_512')) (flatten_hidden)
-                if not(args.a_t):
-                    context = LSTM(512, return_sequences=False, stateful=False, input_shape=(args.num_frames, 512)) (hidden_input)
-                else:
-                    if args.bidir:
-                        hidden_input = Bidirectional(LSTM(512, return_sequences=True, stateful=False, input_shape=(args.num_frames, 512)), merge_mode='sum') (hidden_input)
-                        all_outs = Bidirectional(LSTM(512, return_sequences=True, stateful=False, input_shape=(args.num_frames, 512)), merge_mode='sum') (hidden_input)
-                    else:
-                        all_outs = LSTM(512, return_sequences=True, stateful=False, input_shape=(args.num_frames, 512)) (hidden_input)
-                    # attention
-                    attention = TimeDistributed(Dense(1, activation='tanh'))(all_outs) 
-                    print attention.shape
-                    attention = Flatten()(attention)
-                    attention = Activation('softmax')(attention)
-                    attention = RepeatVector(512)(attention)
-                    attention = Permute([2, 1])(attention)
-                    sent_representation = merge([all_outs, attention], mode='mul')
-                    context = Lambda(lambda xin: K.sum(xin, axis=-2), output_shape=(512,))(sent_representation)
-                    print context.shape
-
-            if mode == "dqn":
-                h4 = Dense(512, activation='relu', name = "fc")(context)
-                output = Dense(num_actions, name = "output")(h4)
-            elif mode == "duel":
-                value_hidden = Dense(512, activation = 'relu', name = 'value_fc')(context)
-                value = Dense(1, name = "value")(value_hidden)
-                action_hidden = Dense(512, activation = 'relu', name = 'action_fc')(context)
-                action = Dense(num_actions, name = "action")(action_hidden)
-                action_mean = Lambda(lambda x: tf.reduce_mean(x, axis = 1, keep_dims = True), name = 'action_mean')(action) 
-                output = Lambda(lambda x: x[0] + x[1] - x[2], name = 'output')([action, value, action_mean])
-    model = Model(inputs = input_data, outputs = output)
-    print(model.summary())
-    return model
+        #The output from the recurrent player is then split into separate Value and Advantage streams
+        # self.streamA,self.streamV = tf.split(self.rnn,2,1)
+        # self.AW = tf.Variable(tf.random_normal([h_size//2,4]))
+        # self.VW = tf.Variable(tf.random_normal([h_size//2,1]))
+        # self.Advantage = tf.matmul(self.streamA,self.AW)
+        # self.Value = tf.matmul(self.streamV,self.VW)
+        self.ad_hidden = tf.contrib.layers.fully_connected(self.rnn, h_size, activation_fn=tf.nn.relu, scope=myScope+'_fc_advantage_hidden')
+        self.Advantage = tf.contrib.layers.fully_connected(self.ad_hidden, num_actions, activation_fn=None, scope=myScope+'_fc_advantage')
+        self.value_hidden = tf.contrib.layers.fully_connected(self.rnn, h_size, activation_fn=tf.nn.relu, scope=myScope+'_fc_value_hidden')
+        self.Value = tf.contrib.layers.fully_connected(self.value_hidden, 1, activation_fn=None, scope=myScope+'_fc_value')
+        
+        # self.salience = tf.gradients(self.Advantage,self.imageIn)
+        #Then combine them together to get our final Q-values.
+        self.Qout = self.Value + tf.subtract(self.Advantage,tf.reduce_mean(self.Advantage,axis=1,keep_dims=True))
+        self.predict = tf.argmax(self.Qout,1)
+        
+        #Below we obtain the loss by taking the sum of squares difference between the target and prediction Q values.
+        self.targetQ = tf.placeholder(shape=[None],dtype=tf.float32)
+        self.actions = tf.placeholder(shape=[None],dtype=tf.int32)
+        self.actions_onehot = tf.one_hot(self.actions, num_actions, dtype=tf.float32)
+        
+        self.Q = tf.reduce_sum(tf.multiply(self.Qout, self.actions_onehot), axis=1)
+        
+        self.td_error = tf.square(self.targetQ - self.Q)
+        
+        #In order to only propogate accurate gradients through the network, we will mask the first
+        #half of the losses for each trace as per Lample & Chatlot 2016
+        # self.maskA = tf.zeros([self.batch_size,self.trainLength//2])
+        # self.maskB = tf.ones([self.batch_size,self.trainLength//2])
+        # self.mask = tf.concat([self.maskA,self.maskB],1)
+        # self.mask = tf.reshape(self.mask,[-1])
+        # self.loss = tf.reduce_mean(self.td_error * self.mask)
+        self.loss = tf.reduce_mean(self.td_error)
+        
+        self.trainer = tf.train.AdamOptimizer(learning_rate=0.0001)
+        self.updateModel = self.trainer.minimize(self.loss)
 
 def save_scalar(step, name, value, writer):
     """Save a scalar value to tensorboard.
@@ -188,8 +183,18 @@ class DQNAgent:
         self.load_network_path = args.load_network_path
         self.enable_ddqn = args.ddqn
         self.net_mode = args.net_mode
-        self.q_network = create_model(input_shape, num_actions, self.net_mode, args, "QNet")
-        self.target_network = create_model(input_shape, num_actions, self.net_mode, args, "TargetNet")
+
+        self.h_size = 512
+        self.tau = 0.001
+        # self.q_network = create_model(input_shape, num_actions, self.net_mode, args, "QNet")
+        # self.target_network = create_model(input_shape, num_actions, self.net_mode, args, "TargetNet")
+        tf.reset_default_graph()
+        #We define the cells for the primary and target q-networks
+        cell = tf.contrib.rnn.BasicLSTMCell(num_units=self.h_size, state_is_tuple=True)
+        cellT = tf.contrib.rnn.BasicLSTMCell(num_units=self.h_size, state_is_tuple=True)
+        self.q_network = Qnetwork(h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell=cell, myScope="QNet")
+        self.target_network = Qnetwork(h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell=cellT, myScope="TargetNet")
+        
         print(">>>> Net mode: %s, Using double dqn: %s" % (self.net_mode, self.enable_ddqn))
         self.eval_freq = args.eval_freq
         self.no_experience = args.no_experience
@@ -197,44 +202,19 @@ class DQNAgent:
         print(">>>> Target fixing: %s, Experience replay: %s" % (not self.no_target, not self.no_experience))
 
         # initialize target network
-        self.target_network.set_weights(self.q_network.get_weights())
-        self.final_model = None
-        self.compile()
+        init = tf.global_variables_initializer()
+        self.saver = tf.train.Saver(max_to_keep=2)
+        trainables = tf.trainable_variables()
+        print trainables, len(trainables)
+        self.targetOps = updateTargetGraph(trainables, self.tau)
 
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        config.allow_soft_placement = True
+        self.sess = tf.Session(config=config)
+        self.sess.run(init)
+        updateTarget(self.targetOps, self.sess)
         self.writer = tf.summary.FileWriter(self.output_path)
-
-    def compile(self, optimizer = None, loss_func = None):
-        """Setup all of the TF graph variables/ops.
-
-        This is inspired by the compile method on the
-        keras.models.Model class.
-
-        This is a good place to create the target network, setup your
-        loss function and any placeholders you might need.
-        
-        You should use the mean_huber_loss function as your
-        loss_function. You can also experiment with MSE and other
-        losses.
-
-        The optimizer can be whatever class you want. We used the
-        keras.optimizers.Optimizer class. Specifically the Adam
-        optimizer.
-        """
-        if loss_func is None:
-            loss_func = mean_huber_loss
-            # loss_func = 'mse'
-        if optimizer is None:
-            optimizer = Adam(lr = self.learning_rate)
-            # optimizer = RMSprop(lr=0.00025)
-        with tf.variable_scope("Loss"):
-            state = Input(shape = (self.frame_height, self.frame_width, self.num_frames) , name = "states")
-            action_mask = Input(shape = (self.num_actions,), name = "actions")
-            qa_value = self.q_network(state)
-            qa_value = merge([qa_value, action_mask], mode = 'mul', name = "multiply")
-            qa_value = Lambda(lambda x: tf.reduce_sum(x, axis=1, keep_dims = True), name = "sum")(qa_value)
-
-        self.final_model = Model(inputs = [state, action_mask], outputs = qa_value)
-        self.final_model.compile(loss=loss_func, optimizer=optimizer)
 
     def calc_q_values(self, state):
         """Given a state (or batch of states) calculate the Q-values.
@@ -246,7 +226,15 @@ class DQNAgent:
         Q-values for the state(s)
         """
         state = state[None, :, :, :]
-        return self.q_network.predict_on_batch(state)
+        # return self.q_network.predict_on_batch(state)
+        # print state.shape
+        # Qout = self.sess.run(self.q_network.rnn_outputs,\
+        #             feed_dict={self.q_network.imageIn: state, self.q_network.batch_size:1})
+        # print Qout.shape
+        Qout = self.sess.run(self.q_network.Qout,\
+                    feed_dict={self.q_network.imageIn: state, self.q_network.batch_size:1})
+        # print Qout.shape
+        return Qout
 
     def select_action(self, state, is_training = True, **kwargs):
         """Select the action based on the current state.
@@ -310,8 +298,8 @@ class DQNAgent:
 
             states = np.stack([x.state for x in samples])
             actions = np.asarray([x.action for x in samples])
-            action_mask = np.zeros((batch_size, self.num_actions))
-            action_mask[range(batch_size), actions] = 1.0
+            # action_mask = np.zeros((batch_size, self.num_actions))
+            # action_mask[range(batch_size), actions] = 1.0
 
             next_states = np.stack([x.next_state for x in samples])
             mask = np.asarray([1 - int(x.is_terminal) for x in samples])
@@ -320,17 +308,34 @@ class DQNAgent:
         if self.no_target:
             next_qa_value = self.q_network.predict_on_batch(next_states)
         else:
-            next_qa_value = self.target_network.predict_on_batch(next_states)
+            # next_qa_value = self.target_network.predict_on_batch(next_states)
+            next_qa_value = self.sess.run(self.target_network.Qout,\
+                    feed_dict={self.target_network.imageIn: next_states, self.target_network.batch_size:batch_size})
 
         if self.enable_ddqn:
-            qa_value = self.q_network.predict_on_batch(next_states)
+            # qa_value = self.q_network.predict_on_batch(next_states)
+            qa_value = self.sess.run(self.q_network.Qout,\
+                    feed_dict={self.q_network.imageIn: next_states, self.q_network.batch_size:batch_size})
             max_actions = np.argmax(qa_value, axis = 1)
             next_qa_value = next_qa_value[range(batch_size), max_actions]
         else:
             next_qa_value = np.max(next_qa_value, axis = 1)
+        # print rewards.shape, mask.shape, next_qa_value.shape, batch_size
         target = rewards + self.gamma * mask * next_qa_value
 
-        return self.final_model.train_on_batch([states, action_mask], target), np.mean(target)
+        loss, _, rnn = self.sess.run([self.q_network.loss, self.q_network.updateModel, self.q_network.rnn], \
+                    feed_dict={self.q_network.imageIn: states, self.q_network.batch_size:batch_size, \
+                    self.q_network.actions: actions, self.q_network.targetQ: target})
+        # print rnn[:5]
+        if np.random.random() < 0.001:
+            merged = self.sess.run(self.q_network.summary_merged, \
+                        feed_dict={self.q_network.imageIn: states, self.q_network.batch_size:batch_size, \
+                        self.q_network.actions: actions, self.q_network.targetQ: target})
+            self.writer.add_summary(merged)
+            self.writer.flush()
+            print '----- writer flushed.'
+        # return self.final_model.train_on_batch([states, action_mask], target), np.mean(target)
+        return loss, np.mean(target)
 
     def fit(self, env, num_iterations, max_episode_length=None):
         """Fit your model to the provided environment.
@@ -431,7 +436,9 @@ class DQNAgent:
                     episode_target_value += target_value
                 # update freq is based on train_freq
                 if t % (self.train_freq * self.target_update_freq) == 0:
-                    self.target_network.set_weights(self.q_network.get_weights())
+                    # self.target_network.set_weights(self.q_network.get_weights())
+                    updateTarget(self.targetOps, self.sess)
+                    print "----- Synced."
                 if t % self.save_freq == 0:
                     self.save_model(idx_episode)
                 if t % (self.eval_freq * self.train_freq) == 0:
@@ -443,8 +450,9 @@ class DQNAgent:
 
 
     def save_model(self, idx_episode):
-        safe_path = self.output_path + "/qnet" + str(idx_episode) + ".h5"
-        self.q_network.save_weights(safe_path)
+        safe_path = self.output_path + "/qnet" + str(idx_episode) + ".cptk"
+        self.saver.save(self.sess, safe_path)
+        # self.q_network.save_weights(safe_path)
         print("Network at", idx_episode, "saved to:", safe_path)
 
     def evaluate(self, env, num_episodes, eval_count, max_episode_length=None, monitor=True):
@@ -486,8 +494,8 @@ class DQNAgent:
             if episode_frames > max_episode_length:
                 done = True
             if done:
-                print("Eval: time %d, episode %d, length %d, reward %.0f" %
-                    (t, idx_episode, episode_frames, episode_reward[idx_episode-1]))
+                print("Eval: time %d, episode %d, length %d, reward %.0f. @eval_count %s" %
+                    (t, idx_episode, episode_frames, episode_reward[idx_episode-1], eval_count))
                 eval_count += 1
                 save_scalar(eval_count, 'eval/eval_episode_raw_reward', episode_reward[idx_episode-1], self.writer)
                 save_scalar(eval_count, 'eval/eval_episode_raw_length', episode_frames, self.writer)
@@ -497,6 +505,7 @@ class DQNAgent:
                 idx_episode += 1
                 self.atari_processor.reset()
                 self.history_processor.reset()
+
 
         reward_mean = np.mean(episode_reward)
         reward_std = np.std(episode_reward)
