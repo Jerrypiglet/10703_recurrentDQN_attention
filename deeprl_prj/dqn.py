@@ -64,7 +64,7 @@ def create_model(input_shape, num_actions, mode, args, model_name='q_network'): 
                 h1 = Convolution2D(32, (8, 8), strides = 4, activation = "relu", name = "conv1")(input_data)
                 h2 = Convolution2D(64, (4, 4), strides = 2, activation = "relu", name = "conv2")(h1)
                 h3 = Convolution2D(64, (3, 3), strides = 1, activation = "relu", name = "conv3")(h2)
-                flatten_hidden = Flatten(name = "flatten")(h3)
+                context = Flatten(name = "flatten")(h3)
             else:
                 print '>>>> Defining Recurrent Modules...'
                 input_data_expanded = Reshape((input_shape[0], input_shape[1], input_shape[2], 1), input_shape = input_shape) (input_data)

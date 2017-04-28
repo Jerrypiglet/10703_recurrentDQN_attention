@@ -8,7 +8,7 @@ import gym
 from gym import wrappers
 import tensorflow as tf
 
-from deeprl_prj.dqn import DQNAgent
+from deeprl_prj.dqn_tf_spatialAt import DQNAgent
 
 def get_output_folder(parent_dir, env_name, task_name):
     """Return save folder.
@@ -48,13 +48,13 @@ def get_output_folder(parent_dir, env_name, task_name):
     parent_dir = parent_dir + '-run{}'.format(experiment_id) + '-' + task_name
     if not os.path.exists(parent_dir):
         os.makedirs(parent_dir)
-        print parent_dir+'/videos/'
-        os.makedirs(parent_dir+'/videos/')
         print '===== Folder did not exist; creating... %s'%parent_dir
     else:
         print '===== Folder exists; delete? %s'%parent_dir
-        raw_input("Press Enter to continue...")
+        # raw_input("Press Enter to continue...")
         os.system('rm -rf %s/' % (parent_dir))
+    os.makedirs(parent_dir+'/videos/')
+    os.makedirs(parent_dir+'/images/')
     return parent_dir
 
 def main():  # noqa: D103
@@ -69,7 +69,7 @@ def main():  # noqa: D103
     parser.add_argument('--final_epsilon', default=0.05, type=float, help='Final exploration probability in epsilon-greedy')
     parser.add_argument('--exploration_steps', default=1000000, type=int, help='Number of steps over which the initial value of epsilon is linearly annealed to its final value')
     parser.add_argument('--num_samples', default=10000000, type=int, help='Number of training samples from the environment in training')
-    parser.add_argument('--num_frames', default=4, type=int, help='Number of frames to feed to Q-Network')
+    parser.add_argument('--num_frames', default=10, type=int, help='Number of frames to feed to Q-Network')
     parser.add_argument('--frame_width', default=84, type=int, help='Resized frame width')
     parser.add_argument('--frame_height', default=84, type=int, help='Resized frame height')
     parser.add_argument('--replay_memory_size', default=1000000, type=int, help='Number of replay memory the agent uses for training')
@@ -92,7 +92,8 @@ def main():  # noqa: D103
 
     parser.add_argument('--task_name', default='', help='task name')
     parser.add_argument('--recurrent', default=False, dest='recurrent', action='store_true', help='enable recurrent DQN')
-    parser.add_argument('--a_t', default=False, dest='a_t', action='store_true', help='enable temporal attention')
+    parser.add_argument('--a_t', default=False, dest='a_t', action='store_true', help='enable temporal/spatial attention')
+    parser.add_argument('--selector', default=False, dest='selector', action='store_true', help='enable selector for spatial attention')
     parser.add_argument('--bidir', default=False, dest='bidir', action='store_true', help='enable two layer bidirectional lstm')
 
     args = parser.parse_args()
