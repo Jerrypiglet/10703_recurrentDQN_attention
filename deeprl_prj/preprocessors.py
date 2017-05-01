@@ -26,6 +26,7 @@ class HistoryPreprocessor(Preprocessor):
     def __init__(self, history_length=1):
         self.history_length = history_length
         self.past_states = None 
+        self.past_states_ori = None 
 
     def process_state_for_network(self, state):
         """You only want history when you're deciding the current action to take."""
@@ -36,12 +37,23 @@ class HistoryPreprocessor(Preprocessor):
         self.past_states = history[:, :, 1:]
         return history
 
+    def process_state_for_network_ori(self, state):
+        """You only want history when you're deciding the current action to take."""
+        row, col, channel = state.shape
+        if self.past_states_ori is None:
+            self.past_states_ori = np.zeros((row, col, channel, self.history_length))
+        # print self.past_states_ori.shape, state.shape
+        history = np.concatenate((self.past_states_ori, np.expand_dims(state, -1)), axis=3)
+        self.past_states_ori = history[:, :, :, 1:]
+        return history
+
     def reset(self):
         """Reset the history sequence.
 
         Useful when you start a new episode.
         """
         self.past_states = None
+        self.past_states_ori = None 
 
     def get_config(self):
         return {'history_length': self.history_length}
@@ -103,6 +115,16 @@ class AtariPreprocessor(Preprocessor):
         outputs float32 images.
         """
         return np.float32(self.process_state_for_memory(state) / 255.0)
+
+    def process_state_for_network_ori(self, state):
+        """Scale, convert to greyscale and store as float32.
+
+        Basically same as process state for memory, but this time
+        outputs float32 images.
+        """
+        img = Image.fromarray(state)
+        state = np.float32(np.array(img) / 255.0)
+        return state
 
     def process_batch(self, samples):
         """The batches from replay memory will be uint8, convert to float32.

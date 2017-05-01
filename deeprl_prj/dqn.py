@@ -277,7 +277,8 @@ class DQNAgent:
                 # linear decay greedy epsilon policy
                 return self.policy.select_action(q_values, is_training)
         else:
-            return GreedyEpsilonPolicy(0.05).select_action(q_values)
+            # return GreedyEpsilonPolicy(0.05).select_action(q_values)
+            return GreedyPolicy().select_action(q_values)
 
     def update_policy(self, current_sample):
         """Update your policy.

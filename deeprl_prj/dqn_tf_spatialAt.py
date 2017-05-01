@@ -331,7 +331,8 @@ class DQNAgent:
                 # linear decay greedy epsilon policy
                 return self.policy.select_action(q_values, is_training)
         else:
-            return GreedyEpsilonPolicy(0.05).select_action(q_values)
+            # return GreedyEpsilonPolicy(0.05).select_action(q_values)
+            return GreedyPolicy().select_action(q_values)
 
     def update_policy(self, current_sample):
         """Update your policy.
@@ -393,13 +394,13 @@ class DQNAgent:
                     feed_dict={self.q_network.imageIn: states, self.q_network.batch_size:batch_size, \
                     self.q_network.actions: actions, self.q_network.targetQ: target})
         # print rnn[:5]
-        if np.random.random() < 0.001:
-            merged = self.sess.run(self.q_network.summary_merged, \
-                        feed_dict={self.q_network.imageIn: states, self.q_network.batch_size:batch_size, \
-                        self.q_network.actions: actions, self.q_network.targetQ: target})
-            self.writer.add_summary(merged)
-            self.writer.flush()
-            print '----- writer flushed.'
+        # if np.random.random() < 0.001:
+        #     merged = self.sess.run(self.q_network.summary_merged, \
+        #                 feed_dict={self.q_network.imageIn: states, self.q_network.batch_size:batch_size, \
+        #                 self.q_network.actions: actions, self.q_network.targetQ: target})
+        #     self.writer.add_summary(merged)
+        #     self.writer.flush()
+        #     print '----- writer flushed.'
         # return self.final_model.train_on_batch([states, action_mask], target), np.mean(target)
         return loss, np.mean(target)
 
@@ -535,7 +536,7 @@ class DQNAgent:
         visually inspect your policy.
         """
         print("Evaluation starts.")
-        plt.figure(1)
+        plt.figure(1, figsize=(40, 20))
 
         is_training = False
         if self.load_network:
@@ -556,17 +557,22 @@ class DQNAgent:
                 self.atari_processor.process_state_for_network(state))
             action = self.select_action(action_state, is_training, policy_type = 'GreedyEpsilonPolicy')
 
+            action_state_ori = self.history_processor.process_state_for_network_ori(
+                self.atari_processor.process_state_for_network_ori(state))
+            # print "state.shape", state.shape
+            # print "action_state_ori.shape", action_state_ori.shape
+
             if np.random.random() < 1e-3:
                 alpha_list = self.sess.run(self.q_network.alpha_list,\
                             feed_dict={self.q_network.imageIn: action_state[None, :, :, :], self.q_network.batch_size:1})
                 # print alpha_list, len(alpha_list), alpha_list[0].shape #10 (1, 49)
                 for alpha_idx in range(len(alpha_list)):
                     plt.subplot(2, len(alpha_list)//2, alpha_idx+1)
-                    img = action_state[:, :, alpha_idx]
-                    plt.imshow(img, cmap='gray')
+                    img = action_state_ori[:, :, :, alpha_idx] #(210, 160, 3)
+                    plt.imshow(img)
                     alp_curr = alpha_list[alpha_idx].reshape(7, 7)
-                    alp_img = skimage.transform.pyramid_expand(alp_curr, upscale=12, sigma=20)
-                    plt.imshow(alp_img, alpha=0.85)
+                    alp_img = skimage.transform.pyramid_expand(alp_curr, upscale=22, sigma=20)
+                    plt.imshow(scipy.misc.imresize(alp_img, (img.shape[0], img.shape[1])), alpha=0.7, cmap='gray')
                     plt.axis('off')
                 # plt.show()
                 # plt.canvas.draw()

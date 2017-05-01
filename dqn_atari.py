@@ -8,9 +8,10 @@ import gym
 from gym import wrappers
 import tensorflow as tf
 
-from deeprl_prj.dqn_tf_spatialAt import DQNAgent
+# from deeprl_prj.dqn_tf_spatialAt import DQNAgent
+from deeprl_prj.dqn_tf import DQNAgent
 
-def get_output_folder(parent_dir, env_name, task_name):
+def get_output_folder(args, parent_dir, env_name, task_name):
     """Return save folder.
 
     Assumes folders in the parent_dir have suffix -run{run
@@ -51,7 +52,7 @@ def get_output_folder(parent_dir, env_name, task_name):
         print '===== Folder did not exist; creating... %s'%parent_dir
     else:
         print '===== Folder exists; delete? %s'%parent_dir
-        # raw_input("Press Enter to continue...")
+        raw_input("Press Enter to continue...")
         os.system('rm -rf %s/' % (parent_dir))
     os.makedirs(parent_dir+'/videos/')
     os.makedirs(parent_dir+'/images/')
@@ -68,7 +69,7 @@ def main():  # noqa: D103
     parser.add_argument('--initial_epsilon', default=1.0, type=float, help='Initial exploration probability in epsilon-greedy')
     parser.add_argument('--final_epsilon', default=0.05, type=float, help='Final exploration probability in epsilon-greedy')
     parser.add_argument('--exploration_steps', default=1000000, type=int, help='Number of steps over which the initial value of epsilon is linearly annealed to its final value')
-    parser.add_argument('--num_samples', default=10000000, type=int, help='Number of training samples from the environment in training')
+    parser.add_argument('--num_samples', default=100000000, type=int, help='Number of training samples from the environment in training')
     parser.add_argument('--num_frames', default=10, type=int, help='Number of frames to feed to Q-Network')
     parser.add_argument('--frame_width', default=84, type=int, help='Resized frame width')
     parser.add_argument('--frame_height', default=84, type=int, help='Resized frame height')
@@ -93,11 +94,12 @@ def main():  # noqa: D103
     parser.add_argument('--task_name', default='', help='task name')
     parser.add_argument('--recurrent', default=False, dest='recurrent', action='store_true', help='enable recurrent DQN')
     parser.add_argument('--a_t', default=False, dest='a_t', action='store_true', help='enable temporal/spatial attention')
+    parser.add_argument('--global_a_t', default=False, dest='global_a_t', action='store_true', help='enable temporal/spatial attention')
     parser.add_argument('--selector', default=False, dest='selector', action='store_true', help='enable selector for spatial attention')
     parser.add_argument('--bidir', default=False, dest='bidir', action='store_true', help='enable two layer bidirectional lstm')
 
     args = parser.parse_args()
-    args.output = get_output_folder(args.output, args.env, args.task_name)
+    args.output = get_output_folder(args, args.output, args.env, args.task_name)
 
     env = gym.make(args.env)
     print("==== Output saved to: ", args.output)
@@ -112,12 +114,12 @@ def main():  # noqa: D103
     print(">>>> Game ", args.env, " #actions: ", num_actions)
 
     dqn = DQNAgent(args, num_actions)
-    # if args.train:
-    print(">> Training mode.")
-    dqn.fit(env, args.num_samples, args.max_episode_length)
-    # else:
-    #     print(">> Evaluation mode.")
-    #     dqn.evaluate(writer, env, args.num_episodes_at_test, args.max_episode_length, not args.no_monitor)
+    if args.train:
+        print(">> Training mode.")
+        dqn.fit(env, args.num_samples, args.max_episode_length)
+    else:
+        print(">> Evaluation mode.")
+        dqn.evaluate(env, args.num_episodes_at_test, 0, args.max_episode_length, not args.no_monitor)
 
 if __name__ == '__main__':
     main()
