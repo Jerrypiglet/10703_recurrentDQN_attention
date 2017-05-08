@@ -9,7 +9,7 @@ from gym import wrappers
 import tensorflow as tf
 
 # from deeprl_prj.dqn_tf_spatialAt import DQNAgent
-from deeprl_prj.dqn_tf import DQNAgent
+from deeprl_prj.dqn import DQNAgent
 
 def get_output_folder(args, parent_dir, env_name, task_name):
     """Return save folder.
@@ -119,7 +119,7 @@ def main():  # noqa: D103
         dqn.fit(env, args.num_samples, args.max_episode_length)
     else:
         print(">> Evaluation mode.")
-        dqn.evaluate(env, args.num_episodes_at_test, 0, args.max_episode_length, not args.no_monitor)
+        dqn.evaluate(env, args, args.num_episodes_at_test, 0, args.max_episode_length, not args.no_monitor)
 
 if __name__ == '__main__':
     main()

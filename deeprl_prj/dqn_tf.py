@@ -20,7 +20,7 @@ from helper import *
 """Main DQN agent."""
 
 class Qnetwork():
-    def __init__(self, args, h_size, num_frames, num_actions, rnn_cell_1, myScope, rnn_cell_2=None):
+    def __init__(self, args, h_size, num_frames, num_actions, rnn_cell_1, myScope, rnn_cell_2=None, rnn_cell_3=None, rnn_cell_4=None):
         #The network recieves a frame from the game, flattened into an array.
         #It then resizes it and processes it through four convolutional layers.
         self.imageIn =  tf.placeholder(shape=[None,84,84,num_frames],dtype=tf.float32)
@@ -51,19 +51,27 @@ class Qnetwork():
         self.state_in_1 = rnn_cell_1.zero_state(self.batch_size, tf.float32)
         if args.bidir:
             self.state_in_2 = rnn_cell_2.zero_state(self.batch_size, tf.float32)
-
-        if args.bidir:
             self.rnn_outputs_tuple, self.rnn_state = tf.nn.bidirectional_dynamic_rnn(\
                 cell_fw=rnn_cell_1, cell_bw=rnn_cell_2, inputs=self.convFlat, dtype=tf.float32, \
                 initial_state_fw=self.state_in_1, initial_state_bw=self.state_in_2, scope=myScope+'_rnn')
             print "====== len(self.rnn_outputs_tuple), self.rnn_outputs_tuple[0] ", len(self.rnn_outputs_tuple), self.rnn_outputs_tuple[0].get_shape().as_list(), self.rnn_outputs_tuple[1].get_shape().as_list() # [None, 10, 512]
             # As we have Bi-LSTM, we have two output, which are not connected. So merge them
             self.rnn_outputs = tf.concat([self.rnn_outputs_tuple[0], self.rnn_outputs_tuple[1]], axis=2)
-            # self.rnn_outputs = tf.contrib.layers.fully_connected(tf.contrib.layers.flatten(self.rnn_outputs_double), h_size, activation_fn=None)
             self.rnn_output_dim = h_size * 2
+
+            self.state_in_3 = rnn_cell_3.zero_state(self.batch_size, tf.float32)
+            self.state_in_4 = rnn_cell_4.zero_state(self.batch_size, tf.float32)
+            self.rnn_outputs_tuple, self.rnn_state = tf.nn.bidirectional_dynamic_rnn(\
+                cell_fw=rnn_cell_3, cell_bw=rnn_cell_4, inputs=self.rnn_outputs, dtype=tf.float32, \
+                initial_state_fw=self.state_in_3, initial_state_bw=self.state_in_4, scope=myScope+'_rnn_2')
+            print "====== len(self.rnn_outputs_tuple), self.rnn_outputs_tuple[0] ", len(self.rnn_outputs_tuple), self.rnn_outputs_tuple[0].get_shape().as_list(), self.rnn_outputs_tuple[1].get_shape().as_list() # [None, 10, 512]
+            # As we have Bi-LSTM, we have two output, which are not connected. So merge them
+            self.rnn_outputs = tf.concat([self.rnn_outputs_tuple[0], self.rnn_outputs_tuple[1]], axis=2)
+            self.rnn_output_dim = h_size * 2
+
         else:
             self.rnn_outputs, self.rnn_state = tf.nn.dynamic_rnn(\
-                inputs=self.convFlat,cell=rnn_cell_1, dtype=tf.float32, \
+                cell=rnn_cell_1, inputs=self.convFlat, dtype=tf.float32, \
                 initial_state=self.state_in_1, scope=myScope+'_rnn')
             self.rnn_output_dim = h_size
 
@@ -80,6 +88,7 @@ class Qnetwork():
                 with tf.variable_scope(myScope+'_attention'):
                     self.attention_v = tf.get_variable(name='atten_v', shape=[self.rnn_output_dim, 1], initializer=tf.contrib.layers.xavier_initializer())
                 self.attention_va = tf.tanh(tf.map_fn(lambda x: tf.matmul(x, self.attention_v), self.rnn_outputs))
+                self.rnn_outputs_before = self.rnn_outputs
             print "====== self.rnn_outputs ", self.rnn_outputs.get_shape().as_list() # [None, 10, 512]
             print "====== self.attention_va ", self.attention_va.get_shape().as_list()
             self.attention_a = tf.nn.softmax(self.attention_va, dim=1)
@@ -208,8 +217,12 @@ class DQNAgent:
         if args.bidir:
             cell_2 = tf.contrib.rnn.BasicLSTMCell(num_units=self.h_size, state_is_tuple=True)
             cellT_2 = tf.contrib.rnn.BasicLSTMCell(num_units=self.h_size, state_is_tuple=True)
-            self.q_network = Qnetwork(args, h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell_1=cell, rnn_cell_2=cell_2, myScope="QNet")
-            self.target_network = Qnetwork(args, h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell_1=cellT, rnn_cell_2=cellT_2, myScope="TargetNet")
+            cell_3 = tf.contrib.rnn.BasicLSTMCell(num_units=self.h_size, state_is_tuple=True)
+            cellT_3 = tf.contrib.rnn.BasicLSTMCell(num_units=self.h_size, state_is_tuple=True)
+            cell_4 = tf.contrib.rnn.BasicLSTMCell(num_units=self.h_size, state_is_tuple=True)
+            cellT_4 = tf.contrib.rnn.BasicLSTMCell(num_units=self.h_size, state_is_tuple=True)
+            self.q_network = Qnetwork(args, h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell_1=cell, rnn_cell_2=cell_2, rnn_cell_3=cell_3, rnn_cell_4=cell_4, myScope="QNet")
+            self.target_network = Qnetwork(args, h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell_1=cellT, rnn_cell_2=cellT_2, rnn_cell_3=cellT_3, rnn_cell_4=cellT_4, myScope="TargetNet")
         else:
             self.q_network = Qnetwork(args, h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell_1=cell, myScope="QNet")
             self.target_network = Qnetwork(args, h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell_1=cellT, myScope="TargetNet")
@@ -460,7 +473,7 @@ class DQNAgent:
                 if t % self.save_freq == 0:
                     self.save_model(idx_episode)
                 if t % (self.eval_freq * self.train_freq) == 0:
-                    episode_reward_mean, episode_reward_std, eval_count = self.evaluate(env, 20, eval_count, max_episode_length, True)
+                    episode_reward_mean, episode_reward_std, eval_count = self.evaluate(env, self.args, 20, eval_count, max_episode_length, True)
                     save_scalar(t, 'eval/eval_episode_reward_mean', episode_reward_mean, self.writer)
                     save_scalar(t, 'eval/eval_episode_reward_std', episode_reward_std, self.writer)
 
@@ -477,7 +490,7 @@ class DQNAgent:
         self.saver.restore(self.sess, restore_path)
         print("+++++++++ Network restored from: %s", restore_path)
 
-    def evaluate(self, env, num_episodes, eval_count, max_episode_length=None, monitor=True):
+    def evaluate(self, env, args, num_episodes, eval_count, max_episode_length=None, monitor=True):
         """Test your agent with a provided environment.
         
         You shouldn't update your network parameters here. Also if you
@@ -491,7 +504,7 @@ class DQNAgent:
         visually inspect your policy.
         """
         print("Evaluation starts.")
-        plt.figure(1, figsize=(45, 20))
+        plt.figure(1, figsize=(22.5, 10))
 
         is_training = False
         if self.load_network:
@@ -520,7 +533,7 @@ class DQNAgent:
 
             state, reward, done, info = env.step(action)
 
-            if dice < 0.1:
+            if dice < 0.1 and not(args.train):
                 attention_a = self.sess.run(self.q_network.attention_a,\
                             feed_dict={self.q_network.imageIn: action_state[None, :, :, :], self.q_network.batch_size:1})
                 # print attention_a.shape #(1, 10, 1)

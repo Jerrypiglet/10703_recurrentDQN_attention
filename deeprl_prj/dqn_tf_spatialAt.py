@@ -21,7 +21,7 @@ import skimage.transform
 """Main DQN agent."""
 
 class Qnetwork():
-    def __init__(self, args, h_size, num_frames, num_actions, rnn_cell, myScope):
+    def __init__(self, args, h_size, num_frames, num_actions, rnn_cell_1, myScope, rnn_cell_2=None):
         #The network recieves a frame from the game, flattened into an array.
         #It then resizes it and processes it through four convolutional layers.
         self.imageIn =  tf.placeholder(shape=[None,84,84,num_frames],dtype=tf.float32)
@@ -44,55 +44,71 @@ class Qnetwork():
             activation_fn=tf.nn.relu, biases_initializer=None,scope=myScope+'_conv3') # (None, 10, 7, 7, 64)
         self.batch_size = tf.placeholder(dtype=tf.int32)
 
-        if not(args.a_t):
-            self.conv4 = tf.contrib.layers.fully_connected(tf.contrib.layers.flatten(self.conv3), h_size, activation_fn=tf.nn.relu)
+        # if not(args.a_t):
+        #     self.conv4 = tf.contrib.layers.fully_connected(tf.contrib.layers.flatten(self.conv3), h_size, activation_fn=tf.nn.relu)
             
-            #We take the output from the final convolutional layer and send it to a recurrent layer.
-            #The input must be reshaped into [batch x trace x units] for rnn processing, 
-            #and then returned to [batch x units] when sent through the upper levles.
-            self.convFlat = tf.reshape(self.conv4,[self.batch_size, num_frames, h_size])
-            self.state_in = rnn_cell.zero_state(self.batch_size, tf.float32)
-            self.rnn_outputs, self.rnn_state = tf.nn.dynamic_rnn(\
-                    inputs=self.convFlat,cell=rnn_cell,dtype=tf.float32,initial_state=self.state_in,scope=myScope+'_rnn')
-            print "======", self.rnn_outputs.get_shape().as_list()
+        #     #We take the output from the final convolutional layer and send it to a recurrent layer.
+        #     #The input must be reshaped into [batch x trace x units] for rnn processing, 
+        #     #and then returned to [batch x units] when sent through the upper levles.
+        #     self.convFlat = tf.reshape(self.conv4,[self.batch_size, num_frames, h_size])
+        #     self.state_in_1 = rnn_cell_1.zero_state(self.batch_size, tf.float32)
 
-            self.rnn_last_output = tf.slice(self.rnn_outputs, [0, num_frames-1, 0], [-1, 1, -1])
-            self.rnn = tf.squeeze(self.rnn_last_output, [1])
-            print "==========", self.rnn.get_shape().as_list()
-        else:
-            self.L = 7*7
-            self.D = 64
-            self.T = num_frames
-            self.H = 512
-            self.selector=args.selector
-            self.weight_initializer = tf.contrib.layers.xavier_initializer()
-            self.const_initializer = tf.constant_initializer(0.0)
+        #     if args.bidir:
+        #         self.state_in_2 = rnn_cell_2.zero_state(self.batch_size, tf.float32)
+        #         self.rnn_outputs_tuple, self.rnn_state = tf.nn.bidirectional_dynamic_rnn(\
+        #             cell_fw=rnn_cell_1, cell_bw=rnn_cell_2, inputs=self.convFlat, dtype=tf.float32, \
+        #             initial_state_fw=self.state_in_1, initial_state_bw=self.state_in_2, scope=myScope+'_rnn')
+        #         print "====== len(self.rnn_outputs_tuple), self.rnn_outputs_tuple[0] ", len(self.rnn_outputs_tuple), self.rnn_outputs_tuple[0].get_shape().as_list(), self.rnn_outputs_tuple[1].get_shape().as_list() # [None, 10, 512]
+        #         # As we have Bi-LSTM, we have two output, which are not connected. So merge them
+        #         self.rnn_outputs = tf.concat([self.rnn_outputs_tuple[0], self.rnn_outputs_tuple[1]], axis=2)
+        #         # self.rnn_outputs = tf.contrib.layers.fully_connected(tf.contrib.layers.flatten(self.rnn_outputs_double), h_size, activation_fn=None)
+        #         self.rnn_output_dim = h_size * 2
+        #     else:
+        #         self.rnn_outputs, self.rnn_state = tf.nn.dynamic_rnn(\
+        #                 inputs=self.convFlat,cell=rnn_cell_1,dtype=tf.float32,initial_state=self.state_in,scope=myScope+'_rnn')
+        #     print "======", self.rnn_outputs.get_shape().as_list()
 
-            self.features = tf.reshape(self.conv3, [self.batch_size, num_frames, self.L, self.D])
-            self.features_list = tf.split(self.features, num_frames, axis=1)
-            print len(self.features_list), self.features_list[0].get_shape().as_list() # 10 [None, 1, 49, 64]
-            self.alpha_list = []
-            lstm_cell = tf.contrib.rnn.BasicLSTMCell(num_units=self.H)
-            c, h = self._get_initial_lstm(features=tf.squeeze(self.features_list[0], [1]), myScope=myScope)
+        #     self.rnn_last_output = tf.slice(self.rnn_outputs, [0, num_frames-1, 0], [-1, 1, -1])
+        #     self.rnn = tf.squeeze(self.rnn_last_output, [1])
+        #     print "==========", self.rnn.get_shape().as_list()
+        # else:
+        self.L = 7*7
+        self.D = 64
+        self.T = num_frames
+        self.H = 512
+        self.selector=args.selector
+        self.weight_initializer = tf.contrib.layers.xavier_initializer()
+        self.const_initializer = tf.constant_initializer(0.0)
 
-            for t in range(self.T):
-                features = tf.squeeze(self.features_list[t], [1])
-                features = self._batch_norm(features, mode='train', name=myScope+'conv_features')
-                features_proj = self._project_features(features=features, myScope=myScope, reuse=(t!=0))
-                context, alpha = self._attention_layer(features, features_proj, h, myScope=myScope, reuse=(t!=0))
-                self.alpha_list.append(alpha)
+        self.features = tf.reshape(self.conv3, [self.batch_size, num_frames, self.L, self.D])
+        self.features_list = tf.split(self.features, num_frames, axis=1)
+        print len(self.features_list), self.features_list[0].get_shape().as_list() # 10 [None, 1, 49, 64]
+        self.alpha_list = []
+        lstm_cell = tf.contrib.rnn.BasicLSTMCell(num_units=self.H)
+        lstm_cell_2 = tf.contrib.rnn.BasicLSTMCell(num_units=self.H)
+        c, h = self._get_initial_lstm(features=tf.squeeze(self.features_list[0], [1]), myScope=myScope)
 
-                if self.selector:
-                    context, beta = self._selector(context, h, myScope=myScope, reuse=(t!=0)) 
+        for t in range(self.T):
+            features = tf.squeeze(self.features_list[t], [1])
+            features = self._batch_norm(features, mode='train' if args.train else 'test', name=myScope+'conv_features', reuse=(t!=0))
+            features_proj = self._project_features(features=features, myScope=myScope, reuse=(t!=0))
+            context, alpha = self._attention_layer(features, features_proj, h, myScope=myScope, reuse=(t!=0))
+            self.alpha_list.append(alpha)
 
-                print "========== context ", context.get_shape().as_list()
+            if self.selector:
+                context, beta = self._selector(context, h, myScope=myScope, reuse=(t!=0)) 
+
+            print "========== context ", context.get_shape().as_list()
+            print "========== h ", h.get_shape().as_list()
+
+            with tf.variable_scope(myScope+'_lstmCell', reuse=(t!=0)):
+                _, (c, h) = lstm_cell(inputs=tf.concat([context, h], 1), state=[c, h])
+
+            with tf.variable_scope(myScope+'_lstmCell_layer2', reuse=(t!=0)):
+                _, (c, h) = lstm_cell_2(inputs=tf.concat(h, 1), state=[c, h])
                 print "========== h ", h.get_shape().as_list()
 
-                with tf.variable_scope(myScope+'_lstmCell', reuse=(t!=0)):
-                    _, (c, h) = lstm_cell(inputs=tf.concat([context, h], 1), state=[c, h])
-                    print "========== h ", h.get_shape().as_list()
-
-            self.rnn = h
+        self.rnn = h
 
 
         if args.net_mode == "duel":
@@ -120,13 +136,14 @@ class Qnetwork():
         self.trainer = tf.train.AdamOptimizer(learning_rate=0.0001)
         self.updateModel = self.trainer.minimize(self.loss)
 
-    def _batch_norm(self, x, mode='train', name=None):
+    def _batch_norm(self, x, mode='train', name=None, reuse=False):
         return tf.contrib.layers.batch_norm(inputs=x, 
                                             decay=0.95,
                                             center=True,
                                             scale=True,
                                             is_training=(mode=='train'),
                                             updates_collections=None,
+                                            reuse=reuse,
                                             scope=(name+'batch_norm'))
 
     def _get_initial_lstm(self, features, myScope):
@@ -251,6 +268,7 @@ class DQNAgent:
         self.load_network_path = args.load_network_path
         self.enable_ddqn = args.ddqn
         self.net_mode = args.net_mode
+        self.args = args
 
         self.h_size = 512
         self.tau = 0.001
@@ -258,8 +276,14 @@ class DQNAgent:
         #We define the cells for the primary and target q-networks
         cell = tf.contrib.rnn.BasicLSTMCell(num_units=self.h_size, state_is_tuple=True)
         cellT = tf.contrib.rnn.BasicLSTMCell(num_units=self.h_size, state_is_tuple=True)
-        self.q_network = Qnetwork(args=args, h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell=cell, myScope="QNet")
-        self.target_network = Qnetwork(args=args, h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell=cellT, myScope="TargetNet")
+        if args.bidir:
+            cell_2 = tf.contrib.rnn.BasicLSTMCell(num_units=self.h_size, state_is_tuple=True)
+            cellT_2 = tf.contrib.rnn.BasicLSTMCell(num_units=self.h_size, state_is_tuple=True)
+            self.q_network = Qnetwork(args, h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell_1=cell, rnn_cell_2=cell_2, myScope="QNet")
+            self.target_network = Qnetwork(args, h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell_1=cellT, rnn_cell_2=cellT_2, myScope="TargetNet")
+        else:
+            self.q_network = Qnetwork(args, h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell_1=cell, myScope="QNet")
+            self.target_network = Qnetwork(args, h_size=self.h_size, num_frames=self.num_frames, num_actions=self.num_actions, rnn_cell_1=cellT, myScope="TargetNet")
         
         print(">>>> Net mode: %s, Using double dqn: %s" % (self.net_mode, self.enable_ddqn))
         self.eval_freq = args.eval_freq
@@ -509,7 +533,7 @@ class DQNAgent:
                 if t % self.save_freq == 0:
                     self.save_model(idx_episode)
                 if t % (self.eval_freq * self.train_freq) == 0:
-                    episode_reward_mean, episode_reward_std, eval_count = self.evaluate(env, 20, eval_count, max_episode_length, True)
+                    episode_reward_mean, episode_reward_std, eval_count = self.evaluate(env, self.args, 20, eval_count, max_episode_length, True)
                     save_scalar(t, 'eval/eval_episode_reward_mean', episode_reward_mean, self.writer)
                     save_scalar(t, 'eval/eval_episode_reward_std', episode_reward_std, self.writer)
 
@@ -522,7 +546,11 @@ class DQNAgent:
         # self.q_network.save_weights(safe_path)
         print("Network at", idx_episode, "saved to:", safe_path)
 
-    def evaluate(self, env, num_episodes, eval_count, max_episode_length=None, monitor=True):
+    def restore_model(self, restore_path):
+        self.saver.restore(self.sess, restore_path)
+        print("+++++++++ Network restored from: %s", restore_path)
+
+    def evaluate(self, env, args, num_episodes, eval_count, max_episode_length=None, monitor=True):
         """Test your agent with a provided environment.
         
         You shouldn't update your network parameters here. Also if you
@@ -536,12 +564,13 @@ class DQNAgent:
         visually inspect your policy.
         """
         print("Evaluation starts.")
-        plt.figure(1, figsize=(40, 20))
+        plt.figure(1, figsize=(22.5, 10))
 
         is_training = False
         if self.load_network:
-            self.q_network.load_weights(self.load_network_path)
-            print("Load network from:", self.load_network_path)
+            # self.q_network.load_weights(self.load_network_path)
+            # print("Load network from:", self.load_network_path)
+            self.restore_model(self.load_network_path)
         if monitor:
             env = wrappers.Monitor(env, self.output_path_videos, video_callable=lambda x:True, resume=True)
         state = env.reset()
@@ -561,24 +590,27 @@ class DQNAgent:
                 self.atari_processor.process_state_for_network_ori(state))
             # print "state.shape", state.shape
             # print "action_state_ori.shape", action_state_ori.shape
+            dice = np.random.random()
+            
+            state, reward, done, info = env.step(action)
 
-            if np.random.random() < 1e-3:
+            if dice < 1e-1 and not(args.train):
                 alpha_list = self.sess.run(self.q_network.alpha_list,\
                             feed_dict={self.q_network.imageIn: action_state[None, :, :, :], self.q_network.batch_size:1})
                 # print alpha_list, len(alpha_list), alpha_list[0].shape #10 (1, 49)
                 for alpha_idx in range(len(alpha_list)):
-                    plt.subplot(2, len(alpha_list)//2, alpha_idx+1)
+                    plt.subplot(2, len(alpha_list)//2+1, alpha_idx+1)
                     img = action_state_ori[:, :, :, alpha_idx] #(210, 160, 3)
                     plt.imshow(img)
                     alp_curr = alpha_list[alpha_idx].reshape(7, 7)
                     alp_img = skimage.transform.pyramid_expand(alp_curr, upscale=22, sigma=20)
                     plt.imshow(scipy.misc.imresize(alp_img, (img.shape[0], img.shape[1])), alpha=0.7, cmap='gray')
                     plt.axis('off')
-                # plt.show()
-                # plt.canvas.draw()
+                plt.subplot(2, action_state_ori.shape[3]//2+1, action_state_ori.shape[3]+2)
+                plt.imshow(state)
                 plt.savefig('%sattention_ep%d-frame%d.png'%(self.output_path_images, eval_count, episode_frames))
-            
-            state, reward, done, info = env.step(action)
+                print '---- Image saved at: %sattention_ep%d-frame%d.png'%(self.output_path_images, eval_count, episode_frames)
+
             episode_frames += 1
             episode_reward[idx_episode-1] += reward 
             if episode_frames > max_episode_length:

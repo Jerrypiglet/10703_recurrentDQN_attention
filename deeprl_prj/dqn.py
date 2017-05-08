@@ -79,8 +79,9 @@ def create_model(input_shape, num_actions, mode, args, model_name='q_network'): 
                     context = LSTM(512, return_sequences=False, stateful=False, input_shape=(args.num_frames, 512)) (hidden_input)
                 else:
                     if args.bidir:
-                        hidden_input = Bidirectional(LSTM(512, return_sequences=True, stateful=False, input_shape=(args.num_frames, 512)), merge_mode='sum') (hidden_input)
-                        all_outs = Bidirectional(LSTM(512, return_sequences=True, stateful=False, input_shape=(args.num_frames, 512)), merge_mode='sum') (hidden_input)
+                        hidden_input = Bidirectional(LSTM(512, return_sequences=True, stateful=False, input_shape=(args.num_frames, 512)), merge_mode='concat') (hidden_input)
+                        all_outs = Bidirectional(LSTM(512, return_sequences=True, stateful=False, input_shape=(args.num_frames, 512)), merge_mode='concat') (hidden_input)
+                        print "====all_outs", all_outs.shape
                     else:
                         all_outs = LSTM(512, return_sequences=True, stateful=False, input_shape=(args.num_frames, 512)) (hidden_input)
                     # attention
@@ -88,11 +89,11 @@ def create_model(input_shape, num_actions, mode, args, model_name='q_network'): 
                     print attention.shape
                     attention = Flatten()(attention)
                     attention = Activation('softmax')(attention)
-                    attention = RepeatVector(512)(attention)
+                    attention = RepeatVector(512 if not(args.a_t) else 1024)(attention)
                     attention = Permute([2, 1])(attention)
                     sent_representation = merge([all_outs, attention], mode='mul')
-                    context = Lambda(lambda xin: K.sum(xin, axis=-2), output_shape=(512,))(sent_representation)
-                    print context.shape
+                    context = Lambda(lambda xin: K.sum(xin, axis=-2), output_shape=(512 if not(args.a_t) else 1024,))(sent_representation)
+                    print "==context.shape", context.shape
 
             if mode == "dqn":
                 h4 = Dense(512, activation='relu', name = "fc")(context)
