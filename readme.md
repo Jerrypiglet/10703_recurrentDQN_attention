@@ -1,7 +1,7 @@
-# Deep Recurrent Attention Reinforcement Learning
+# Deep Recurrent Attention Reinforcement Learning [incomplete engineering]
 
 10703 course project.
-See this file for details. https://cl.ly/1h3b2k3f3H3X/10703_Course_Project_Proposal.pdf
+See this file for details.
 
 ## There are two types of attention to implement:
 - Temporal attention (already implemented; enable with the `--a_t' flag. See this report http://cs229.stanford.edu/proj2016/report/ChenYingLaird-DeepQLearningWithRecurrentNeuralNetwords-report.pdf or this post https://github.com/fchollet/keras/issues/1629
